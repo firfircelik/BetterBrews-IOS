@@ -44,9 +44,13 @@ Uygulama modern iOS geliştirme standartlarını kullanır:
 
 - **SwiftUI**: Kullanıcı arayüzü
 - **MVVM Pattern**: Mimari tasarım
+- **CoreData**: Yerel veritabanı ve persistence
+- **Repository Pattern**: Veri erişim katmanı
 - **Combine Framework**: Reaktif programlama
 - **Swift Charts**: Veri görselleştirme
 - **Async/Await**: Asenkron işlemler
+- **Background Fetch**: Otomatik veri güncelleme
+- **Web Scraping**: Gerçek piyasa verileri
 - **Modüler Yapı**: Bakımı kolay kod organizasyonu
 
 ### 📁 Proje Yapısı
@@ -60,6 +64,13 @@ AgriMarket/
 │   ├── News.swift
 │   ├── TradeFlow.swift
 │   └── Weather.swift
+├── CoreData/            # CoreData stack
+│   ├── AgriMarket.xcdatamodeld
+│   └── PersistenceController.swift
+├── Repositories/        # Data access layer
+│   ├── CommodityRepository.swift
+│   ├── NewsRepository.swift
+│   └── WeatherRepository.swift
 ├── ViewModels/          # İş mantığı
 │   ├── DashboardViewModel.swift
 │   └── CommodityViewModel.swift
@@ -77,9 +88,97 @@ AgriMarket/
 │   ├── CommodityService.swift
 │   ├── NewsService.swift
 │   ├── TradeFlowService.swift
-│   └── WeatherService.swift
+│   ├── WeatherService.swift
+│   ├── WebScrapingService.swift
+│   ├── DataParserService.swift
+│   ├── DataSyncService.swift
+│   └── BackgroundFetchService.swift
 └── Resources/           # Kaynaklar
     └── Assets.xcassets
+```
+
+## 🗄️ Veritabanı ve Veri Yönetimi
+
+### CoreData Modelleri
+
+Uygulama CoreData kullanarak yerel veri depolaması yapar:
+
+- **CommodityEntity**: Emtia bilgileri ve fiyatları
+- **PriceDataEntity**: Geçmiş fiyat verileri
+- **NewsEntity**: Haber makaleleri
+- **PriceAlertEntity**: Kullanıcı fiyat uyarıları
+- **WeatherDataEntity**: Hava durumu verileri
+
+### Repository Pattern
+
+Her veri türü için ayrı repository:
+
+```swift
+// Commodity verilerine erişim
+let commodities = try await CommodityRepository.shared.fetchAllCommodities()
+
+// Favori emtialar
+let favorites = try await CommodityRepository.shared.fetchFavoriteCommodities()
+
+// Fiyat geçmişi
+let history = try await CommodityRepository.shared.fetchPriceHistory(
+    commodityId: "CORN",
+    timeframe: .oneMonth
+)
+```
+
+## 🕷️ Web Scraping ve Veri Kaynakları
+
+Uygulama gerçek zamanlı veri çekmek için çeşitli kaynaklardan scraping yapar:
+
+### Desteklenen Kaynaklar
+
+- **NASDAQ**: Emtia futures fiyatları
+- **Investing.com**: Kapsamlı emtia verileri
+- **Trading Economics**: Makroekonomik veriler
+- **USDA**: Resmi ABD tarım verileri
+- **Reuters**: Finansal haberler
+- **AgWeb**: Tarım haberleri
+- **Farm Progress**: Sektör haberleri
+
+### Otomatik Veri Senkronizasyonu
+
+```swift
+// Tam senkronizasyon
+try await DataSyncService.shared.performFullSync()
+
+// Otomatik senkronizasyon başlat
+DataSyncService.shared.startAutomaticSync()
+
+// Senkronizasyon aralıkları:
+// - Emtialar: Her 5 dakika
+// - Haberler: Her 15 dakika
+// - Hava Durumu: Her 30 dakika
+```
+
+## 🔄 Background Fetch
+
+Uygulama arka planda otomatik olarak güncellenir:
+
+- **App Refresh**: 15 dakikada bir veri güncelleme
+- **Cleanup Task**: Günlük eski veri temizleme
+- **Smart Notifications**: Önemli fiyat değişikliklerinde bildirim
+
+### Entegrasyon
+
+```swift
+// Info.plist'e ekleyin:
+<key>BGTaskSchedulerPermittedIdentifiers</key>
+<array>
+    <string>com.agrimarket.refresh</string>
+    <string>com.agrimarket.cleanup</string>
+</array>
+
+<key>UIBackgroundModes</key>
+<array>
+    <string>fetch</string>
+    <string>processing</string>
+</array>
 ```
 
 ## 🚀 Başlangıç
@@ -130,16 +229,23 @@ open AgriMarket.xcodeproj
 
 ## 🔮 Gelecek Özellikler
 
-- [ ] Gerçek zamanlı API entegrasyonu
-- [ ] Push bildirimleri
-- [ ] Favori emtialar
-- [ ] Portföy takibi
-- [ ] Gelişmiş grafikler ve teknik göstergeler
-- [ ] Çoklu dil desteği
+- [x] CoreData yerel veritabanı
+- [x] Web scraping servisleri
+- [x] Otomatik veri senkronizasyonu
+- [x] Background fetch
+- [x] Repository pattern
+- [x] HTML/JSON parser
+- [ ] Machine Learning fiyat tahminleri
+- [ ] Push bildirimleri (temel yapı hazır)
+- [ ] Portföy takibi ve P&L analizi
+- [ ] Gelişmiş teknik göstergeler (RSI, MACD, Bollinger Bands)
+- [ ] Çoklu dil desteği (İngilizce, İspanyolca, Portekizce)
 - [ ] Dark mode iyileştirmeleri
 - [ ] iPad optimizasyonu
 - [ ] watchOS uygulaması
 - [ ] Widget desteği
+- [ ] Sosyal paylaşım özellikleri
+- [ ] PDF rapor oluşturma
 
 ## 🛠️ Teknolojiler
 

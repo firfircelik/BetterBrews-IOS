@@ -11,12 +11,46 @@ import SwiftUI
 @main
 struct AgriMarketApp: App {
     @StateObject private var appState = AppState()
+    @StateObject private var syncService = DataSyncService.shared
+
+    // CoreData persistence
+    let persistenceController = PersistenceController.shared
+
+    // Background fetch
+    let backgroundService = BackgroundFetchService.shared
+
+    init() {
+        // Setup background tasks
+        backgroundService.setupForAppDelegate()
+
+        // Start automatic sync
+        DataSyncService.shared.startAutomaticSync()
+    }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(appState)
+                .environmentObject(syncService)
+                .environment(\.managedObjectContext, persistenceController.viewContext)
                 .preferredColorScheme(appState.isDarkMode ? .dark : .light)
+                .onAppear {
+                    performInitialSync()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                    backgroundService.handleAppDidEnterBackground()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                    backgroundService.handleAppWillEnterForeground()
+                }
+        }
+    }
+
+    private func performInitialSync() {
+        Task {
+            if syncService.isSyncNeeded() {
+                try? await syncService.performFullSync()
+            }
         }
     }
 }
