@@ -20,7 +20,7 @@ class DecisionEngine: ObservableObject {
 
     // MARK: - Dependencies
 
-    private let priceService: CommodityService
+    private let usdaService: USDADataService
     private let patternService: PatternRecognitionService
     private let calendar: AgriculturalCalendar
 
@@ -37,11 +37,11 @@ class DecisionEngine: ObservableObject {
     // Between 0.35-0.65 = STORE (uncertain)
 
     init(
-        priceService: CommodityService = .shared,
+        usdaService: USDADataService = .shared,
         patternService: PatternRecognitionService = .shared,
         calendar: AgriculturalCalendar = .shared
     ) {
-        self.priceService = priceService
+        self.usdaService = usdaService
         self.patternService = patternService
         self.calendar = calendar
     }
@@ -117,13 +117,35 @@ class DecisionEngine: ObservableObject {
     // MARK: - Price Fetching
 
     private func fetchCurrentPrice(_ commodity: Commodity) async throws -> (price: Double, change: Double) {
-        // Use existing commodity data if available
+        // Fetch real USDA data for corn
+        if commodity.name.lowercased().contains("corn") {
+            let cornPrice = try await usdaService.fetchCurrentCornPrice()
+            return (price: cornPrice.price, change: cornPrice.change)
+        }
+
+        // Fallback to commodity data
         return (price: commodity.currentPrice, change: commodity.dayChange)
     }
 
     private func fetchPriceHistory(_ commodity: Commodity, days: Int) async throws -> [PriceData] {
-        // This would integrate with your existing CommodityRepository
-        // For now, return mock data structure
+        // Fetch real USDA historical data for corn
+        if commodity.name.lowercased().contains("corn") {
+            let currentYear = Calendar.current.component(.year, from: Date())
+            let cornPrices = try await usdaService.fetchHistoricalPrices(
+                startYear: currentYear,
+                endYear: currentYear,
+                state: "US"
+            )
+
+            // Convert to PriceData and filter to last N days
+            let cutoffDate = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
+
+            return cornPrices
+                .filter { $0.date >= cutoffDate }
+                .map { $0.toPriceData(commodityId: commodity.id) }
+        }
+
+        // Fallback: return empty for now
         return []
     }
 
