@@ -18,6 +18,11 @@ class USDADataService {
     private let baseURL = "https://quickstats.nass.usda.gov/api"
     private let session: URLSession
     private let cache: USDADataCache
+    private let apiKey: String?
+
+    // USDA NASS API Key (free from https://quickstats.nass.usda.gov/api)
+    // If nil, falls back to mock data for development
+    private static let USDA_API_KEY: String? = ProcessInfo.processInfo.environment["USDA_API_KEY"]
 
     init() {
         let config = URLSessionConfiguration.default
@@ -25,6 +30,7 @@ class USDADataService {
         config.requestCachePolicy = .returnCacheDataElseLoad
         self.session = URLSession(configuration: config)
         self.cache = USDADataCache()
+        self.apiKey = Self.USDA_API_KEY
     }
 
     // MARK: - Current Corn Price
@@ -158,22 +164,143 @@ class USDADataService {
         state: String,
         limit: Int
     ) async throws -> [USDAPrice] {
-        // USDA NASS QuickStats API endpoint
-        // This is a simplified version - actual API has more parameters
+        // Try real API if key available
+        if let apiKey = apiKey {
+            do {
+                return try await fetchRealUSDAData(
+                    year: year,
+                    state: state,
+                    limit: limit,
+                    apiKey: apiKey
+                )
+            } catch {
+                print("⚠️ USDA API failed, falling back to mock data: \(error.localizedDescription)")
+                // Fall through to mock data
+            }
+        }
 
-        // For demonstration, using mock data structure
-        // In production, this would make actual API call
+        // Fallback: Mock data for development
+        print("ℹ️ Using mock USDA data (no API key configured)")
+        return generateMockUSDAData(year: year, count: limit)
+    }
 
-        // Example API URL:
-        // https://quickstats.nass.usda.gov/api/api_GET/?
-        //   source_desc=SURVEY&
-        //   commodity_desc=CORN&
-        //   statisticcat_desc=PRICE%20RECEIVED&
-        //   year=2023&
-        //   state_alpha=US
+    /// Real USDA NASS QuickStats API call
+    private func fetchRealUSDAData(
+        year: Int,
+        state: String,
+        limit: Int,
+        apiKey: String
+    ) async throws -> [USDAPrice] {
+        // Build API URL
+        var components = URLComponents(string: "\(baseURL)/api_GET/")!
 
-        let mockPrices = generateMockUSDAData(year: year, count: limit)
-        return mockPrices
+        components.queryItems = [
+            URLQueryItem(name: "key", value: apiKey),
+            URLQueryItem(name: "source_desc", value: "SURVEY"),
+            URLQueryItem(name: "sector_desc", value: "CROPS"),
+            URLQueryItem(name: "group_desc", value: "FIELD CROPS"),
+            URLQueryItem(name: "commodity_desc", value: "CORN"),
+            URLQueryItem(name: "statisticcat_desc", value: "PRICE RECEIVED"),
+            URLQueryItem(name: "unit_desc", value: "$ / BU"),
+            URLQueryItem(name: "agg_level_desc", value: state == "US" ? "NATIONAL" : "STATE"),
+            URLQueryItem(name: "state_alpha", value: state),
+            URLQueryItem(name: "year", value: "\(year)"),
+            URLQueryItem(name: "freq_desc", value: "MONTHLY"), // Monthly prices
+            URLQueryItem(name: "format", value: "JSON")
+        ]
+
+        guard let url = components.url else {
+            throw USDAError.invalidResponse
+        }
+
+        // Make request
+        let (data, response) = try await session.data(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw USDAError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw USDAError.apiError("HTTP \(httpResponse.statusCode)")
+        }
+
+        // Parse response
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let dateString = try container.decode(String.self)
+
+            // USDA dates are like "2023-09" for monthly
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM"
+
+            if let date = formatter.date(from: dateString) {
+                return date
+            }
+
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Cannot decode date string \(dateString)"
+            )
+        }
+
+        let usdaResponse = try decoder.decode(USDAResponse.self, from: data)
+
+        // Convert to USDAPrice format
+        let prices = usdaResponse.data.prefix(limit).compactMap { item -> USDAPrice? in
+            guard let priceValue = Double(item.value),
+                  let date = parseUSDADate(item.year, item.period) else {
+                return nil
+            }
+
+            return USDAPrice(
+                price: priceValue,
+                date: date,
+                volume: nil // USDA doesn't provide volume
+            )
+        }
+
+        return prices
+    }
+
+    // MARK: - API Response Models
+
+    private struct USDAResponse: Codable {
+        let data: [USDADataPoint]
+    }
+
+    private struct USDADataPoint: Codable {
+        let value: String           // Price as string
+        let year: Int
+        let period: String         // "AUG", "SEP", etc.
+        let state_alpha: String?
+
+        enum CodingKeys: String, CodingKey {
+            case value = "Value"
+            case year = "year"
+            case period = "period"
+            case state_alpha = "state_alpha"
+        }
+    }
+
+    private func parseUSDADate(_ year: Int, _ period: String) -> Date? {
+        // USDA periods are like "AUG", "SEP"
+        let monthMap: [String: Int] = [
+            "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4,
+            "MAY": 5, "JUN": 6, "JUL": 7, "AUG": 8,
+            "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12
+        ]
+
+        guard let month = monthMap[period.uppercased()] else {
+            return nil
+        }
+
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        components.day = 15 // Mid-month
+
+        return Calendar.current.date(from: components)
     }
 
     /// Generate realistic USDA-style data for development

@@ -89,11 +89,117 @@ class BarChartService {
             throw BarChartError.invalidURL
         }
 
-        // For now, return mock data based on realistic CME pricing
-        // In production, this would actually scrape the page
-        let mockData = generateMockFuturesData(symbol: symbol, name: name)
+        // Try real scraping first
+        do {
+            return try await scrapeBarChartPage(url: url, symbol: symbol, name: name)
+        } catch {
+            print("⚠️ Barchart scraping failed for \(symbol), using mock data: \(error.localizedDescription)")
+            // Fallback to mock data
+            return generateMockFuturesData(symbol: symbol, name: name)
+        }
+    }
 
-        return mockData
+    /// Scrape Barchart.com for real CME futures data
+    private func scrapeBarChartPage(url: URL, symbol: String, name: String) async throws -> FuturesContract {
+        // Fetch HTML
+        var request = URLRequest(url: url)
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw BarChartError.scrapingFailed("Invalid response")
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw BarChartError.scrapingFailed("HTTP \(httpResponse.statusCode)")
+        }
+
+        guard let html = String(data: data, encoding: .utf8) else {
+            throw BarChartError.scrapingFailed("Cannot decode HTML")
+        }
+
+        // Barchart embeds JSON data in <script> tags with __NEXT_DATA__
+        // Example: <script id="__NEXT_DATA__" type="application/json">{"props":...}</script>
+
+        // Look for the JSON data block
+        if let jsonRange = html.range(of: #"<script id="__NEXT_DATA__"[^>]*>(.*?)</script>"#, options: .regularExpression) {
+            let jsonBlock = String(html[jsonRange])
+
+            // Extract JSON content
+            if let contentStart = jsonBlock.range(of: ">")?.upperBound,
+               let contentEnd = jsonBlock.range(of: "</script>")?.lowerBound {
+                let jsonString = String(jsonBlock[contentStart..<contentEnd])
+
+                if let jsonData = jsonString.data(using: .utf8),
+                   let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+
+                    // Navigate to quote data
+                    // Structure: props -> pageProps -> quote
+                    if let props = parsed["props"] as? [String: Any],
+                       let pageProps = props["pageProps"] as? [String: Any],
+                       let quote = pageProps["quote"] as? [String: Any] {
+
+                        // Extract price data
+                        let lastPrice = quote["lastPrice"] as? Double ?? 0
+                        let netChange = quote["netChange"] as? Double ?? 0
+                        let percentChange = quote["percentChange"] as? Double ?? 0
+                        let highPrice = quote["highPrice"] as? Double ?? 0
+                        let lowPrice = quote["lowPrice"] as? Double ?? 0
+                        let volume = quote["volume"] as? Int ?? 0
+                        let openInterest = quote["openInterest"] as? Int ?? 0
+
+                        return FuturesContract(
+                            symbol: symbol,
+                            name: name,
+                            commodity: .corn,
+                            price: lastPrice,
+                            change: netChange,
+                            changePercent: percentChange,
+                            high: highPrice,
+                            low: lowPrice,
+                            volume: volume,
+                            openInterest: openInterest,
+                            expirationDate: parseContractDate(symbol: symbol),
+                            lastUpdated: Date()
+                        )
+                    }
+                }
+            }
+        }
+
+        // Alternative: Try regex patterns for price data
+        // Barchart often has: <span class="last-change">5.89</span>
+        if let priceMatch = html.range(of: #"<span[^>]*class="[^"]*last-price[^"]*"[^>]*>([0-9.]+)</span>"#, options: .regularExpression) {
+            let priceText = String(html[priceMatch])
+            if let price = extractNumber(from: priceText) {
+                // Got at least the price - use it with estimated values
+                return FuturesContract(
+                    symbol: symbol,
+                    name: name,
+                    commodity: .corn,
+                    price: price,
+                    change: 0.0, // Unknown
+                    changePercent: 0.0,
+                    high: price * 1.01,
+                    low: price * 0.99,
+                    volume: 0,
+                    openInterest: 0,
+                    expirationDate: parseContractDate(symbol: symbol),
+                    lastUpdated: Date()
+                )
+            }
+        }
+
+        throw BarChartError.scrapingFailed("Could not parse price data from HTML")
+    }
+
+    private func extractNumber(from text: String) -> Double? {
+        let pattern = #"([0-9]+\.[0-9]+)"#
+        guard let range = text.range(of: pattern, options: .regularExpression) else {
+            return nil
+        }
+        return Double(String(text[range]))
     }
 
     /// Generate realistic CME futures data for development
