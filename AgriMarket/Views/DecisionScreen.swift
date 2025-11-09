@@ -27,11 +27,13 @@ struct DecisionScreen: View {
                 } else if let decision = engine.currentDecision {
                     ScrollView {
                         VStack(spacing: 20) {
-                            // Price Ticker
+                            // Price Ticker (with futures + basis)
                             PriceTicker(
                                 symbol: commodity.symbol,
                                 price: engine.currentPrice,
-                                change: engine.priceChange
+                                change: engine.priceChange,
+                                futuresPrice: engine.futuresPrice,
+                                basis: engine.basis
                             )
                             .padding(.top)
 
@@ -119,25 +121,70 @@ struct PriceTicker: View {
     let symbol: String
     let price: Double
     let change: Double
+    let futuresPrice: Double?
+    let basis: Basis?
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 12) {
+            // Header
             Text(symbol)
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(formatPrice(price))
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
+            // CASH PRICE (Main)
+            VStack(spacing: 4) {
+                Text("Cash Price")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
 
-                HStack(spacing: 4) {
-                    Image(systemName: change >= 0 ? "arrow.up.right" : "arrow.down.right")
-                        .font(.caption)
-                    Text(formatChange(change))
-                        .font(.subheadline)
-                        .bold()
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(formatPrice(price))
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+
+                    HStack(spacing: 4) {
+                        Image(systemName: change >= 0 ? "arrow.up.right" : "arrow.down.right")
+                            .font(.caption)
+                        Text(formatChange(change))
+                            .font(.subheadline)
+                            .bold()
+                    }
+                    .foregroundColor(change >= 0 ? .green : .red)
                 }
-                .foregroundColor(change >= 0 ? .green : .red)
+            }
+
+            // FUTURES + BASIS (if available)
+            if let futuresPrice = futuresPrice, let basis = basis {
+                Divider()
+
+                HStack(spacing: 20) {
+                    // Futures Price
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Futures")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text(formatPrice(futuresPrice))
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                    }
+
+                    Spacer()
+
+                    // Basis
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text("Basis")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        HStack(spacing: 4) {
+                            Text(formatBasis(basis.basis))
+                                .font(.headline)
+                                .foregroundColor(basisColor(basis))
+                            Image(systemName: basisIcon(basis))
+                                .font(.caption)
+                                .foregroundColor(basisColor(basis))
+                        }
+                    }
+                }
+                .padding(.horizontal)
             }
         }
         .padding()
@@ -153,6 +200,30 @@ struct PriceTicker: View {
 
     private func formatChange(_ change: Double) -> String {
         String(format: "%+.2f%%", change)
+    }
+
+    private func formatBasis(_ basis: Double) -> String {
+        String(format: "%+.0f¢", basis * 100)
+    }
+
+    private func basisColor(_ basis: Basis) -> Color {
+        if basis.isWide {
+            return .green  // Good for farmers - strong local demand
+        } else if basis.isNarrow {
+            return .red    // Bad for farmers - weak local demand
+        } else {
+            return .orange // Normal basis
+        }
+    }
+
+    private func basisIcon(_ basis: Basis) -> String {
+        if basis.isWide {
+            return "arrow.up.circle.fill"
+        } else if basis.isNarrow {
+            return "arrow.down.circle.fill"
+        } else {
+            return "minus.circle.fill"
+        }
     }
 }
 

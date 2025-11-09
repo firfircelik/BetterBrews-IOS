@@ -15,12 +15,16 @@ class DecisionEngine: ObservableObject {
     @Published var currentDecision: HarvestDecision?
     @Published var currentPrice: Double = 0.0
     @Published var priceChange: Double = 0.0
+    @Published var futuresPrice: Double?
+    @Published var basis: Basis?
     @Published var isAnalyzing: Bool = false
     @Published var lastError: String?
 
     // MARK: - Dependencies
 
     private let usdaService: USDADataService
+    private let barChartService: BarChartService
+    private let basisCalculator: BasisCalculator
     private let patternService: PatternRecognitionService
     private let calendar: AgriculturalCalendar
 
@@ -38,10 +42,14 @@ class DecisionEngine: ObservableObject {
 
     init(
         usdaService: USDADataService = .shared,
+        barChartService: BarChartService = .shared,
+        basisCalculator: BasisCalculator = .shared,
         patternService: PatternRecognitionService = .shared,
         calendar: AgriculturalCalendar = .shared
     ) {
         self.usdaService = usdaService
+        self.barChartService = barChartService
+        self.basisCalculator = basisCalculator
         self.patternService = patternService
         self.calendar = calendar
     }
@@ -57,6 +65,17 @@ class DecisionEngine: ObservableObject {
             let currentPriceData = try await fetchCurrentPrice(commodity)
             currentPrice = currentPriceData.price
             priceChange = currentPriceData.change
+
+            // 1b. Get CME futures price + calculate basis
+            if commodity.name.lowercased().contains("corn") {
+                if let frontMonth = try? await barChartService.fetchFrontMonthCorn() {
+                    futuresPrice = frontMonth.price
+                    basis = basisCalculator.calculateCornBasis(
+                        cashPrice: currentPrice,
+                        futuresContract: frontMonth
+                    )
+                }
+            }
 
             // 2. Get historical data (30 days)
             let history = try await fetchPriceHistory(commodity, days: 30)
@@ -340,6 +359,17 @@ class DecisionEngine: ObservableObject {
                 text: "Historical pattern detected: \(pattern.name)",
                 impact: pattern.suggestedAction == .sellNow ? .negative : .positive,
                 source: "Pattern Recognition"
+            ))
+        }
+
+        // Basis evidence (cash vs futures)
+        if let basis = self.basis {
+            let basisText = String(format: "Basis: %+.2f¢ (%@)", basis.basis * 100, basis.interpretation)
+            evidence.append(Evidence(
+                icon: "chart.bar.doc.horizontal",
+                text: basisText,
+                impact: basis.isWide ? .positive : basis.isNarrow ? .negative : .neutral,
+                source: "CME Futures"
             ))
         }
 
